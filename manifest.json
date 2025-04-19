@@ -1,12 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "Auto Tab Reloader",
+  "name": "noVNC Connection Keeper",
   "version": "1.0",
-  "description": "Automatically reloads selected tabs at random intervals",
+  "description": "Automatically refreshes noVNC connections to keep them active",
   "permissions": [
     "tabs",
     "storage",
-    "alarms"
+    "alarms",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js"
