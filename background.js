@@ -33,6 +33,7 @@ async function reloadTab(tabId) {
     if (!isNoVNC) {
       console.log('Tab is no longer a noVNC connection, removing from auto-reload');
       autoReloadTabs.delete(tabId);
+      await saveEnabledTabs();
       return;
     }
 
@@ -57,6 +58,7 @@ async function reloadTab(tabId) {
     if (!stillNoVNC) {
       console.log('Tab is no longer a noVNC connection after reload');
       autoReloadTabs.delete(tabId);
+      await saveEnabledTabs();
       return;
     }
     
@@ -84,15 +86,51 @@ function scheduleNextReload(tabId) {
   }, delay);
 }
 
+// Save enabled tabs to storage
+async function saveEnabledTabs() {
+  const tabsToSave = {};
+  autoReloadTabs.forEach((info, tabId) => {
+    tabsToSave[tabId] = {
+      nextReloadTime: info.nextReloadTime,
+      interval: info.interval
+    };
+  });
+  await chrome.storage.local.set({ enabledTabs: tabsToSave });
+}
+
+// Load enabled tabs from storage
+async function loadEnabledTabs() {
+  const result = await chrome.storage.local.get('enabledTabs');
+  const savedTabs = result.enabledTabs || {};
+  
+  // Check each saved tab and re-enable if it's still a noVNC tab
+  for (const [tabId, info] of Object.entries(savedTabs)) {
+    const numericTabId = parseInt(tabId);
+    try {
+      const tab = await chrome.tabs.get(numericTabId);
+      if (tab) {
+        const isNoVNC = await isNoVNCTab(numericTabId);
+        if (isNoVNC) {
+          autoReloadTabs.set(numericTabId, info);
+          scheduleNextReload(numericTabId);
+        }
+      }
+    } catch (error) {
+      console.log('Tab no longer exists:', tabId);
+    }
+  }
+}
+
 // Listen for messages from the popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'toggleTab') {
     const tabId = message.tabId;
     if (message.enabled) {
       // Verify it's a noVNC tab before enabling
-      isNoVNCTab(tabId).then(isNoVNC => {
+      isNoVNCTab(tabId).then(async isNoVNC => {
         if (isNoVNC) {
           scheduleNextReload(tabId);
+          await saveEnabledTabs();
           sendResponse({ success: true });
         } else {
           sendResponse({ success: false, error: 'Not a noVNC tab' });
@@ -101,6 +139,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true; // Required for async response
     } else {
       autoReloadTabs.delete(tabId);
+      saveEnabledTabs();
       sendResponse({ success: true });
     }
   } else if (message.action === 'getEnabledTabs') {
@@ -116,6 +155,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // Handle tab removal
-chrome.tabs.onRemoved.addListener((tabId) => {
+chrome.tabs.onRemoved.addListener(async (tabId) => {
   autoReloadTabs.delete(tabId);
-}); 
+  await saveEnabledTabs();
+});
+
+// Initialize when extension starts
+chrome.runtime.onStartup.addListener(loadEnabledTabs);
+chrome.runtime.onInstalled.addListener(loadEnabledTabs);
+
+// Load enabled tabs when background script starts
+loadEnabledTabs(); 
